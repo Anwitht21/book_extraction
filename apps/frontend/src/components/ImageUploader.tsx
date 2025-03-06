@@ -54,26 +54,40 @@ export default function ImageUploader({
       return;
     }
     
+    console.log('Starting upload process');
     onUploadStart();
     
     const formData = new FormData();
     formData.append('coverImage', selectedFile);
+    console.log('FormData created with file:', selectedFile.name);
+    
+    // Log the FormData contents for debugging
+    Array.from(formData.entries()).forEach(pair => {
+      console.log('FormData entry:', pair[0], pair[1]);
+    });
     
     try {
-      const response = await axios.post<ImageUploadResponse>(
-        '/api/upload',
-        formData,
-        {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        }
-      );
+      console.log('Sending request to /api/upload');
       
-      if (response.data.success && response.data.bookData) {
-        onBookDataReceived(response.data.bookData);
+      // Use fetch instead of axios
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json() as ImageUploadResponse;
+      console.log('Response received:', data);
+      
+      if (data.success && data.bookData) {
+        console.log('Book data received:', data.bookData);
+        onBookDataReceived(data.bookData);
       } else {
-        onError(response.data.error || 'Failed to process image');
+        console.error('API error:', data.error);
+        onError(data.error || 'Failed to process image');
       }
     } catch (error) {
       console.error('Upload error:', error);

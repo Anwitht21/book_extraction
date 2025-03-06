@@ -9,6 +9,7 @@ export default function Home() {
   const [bookData, setBookData] = useState<BookData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testMessage, setTestMessage] = useState<string | null>(null);
 
   const handleBookDataReceived = (data: BookData) => {
     setBookData(data);
@@ -26,6 +27,19 @@ export default function Home() {
     setError(null);
   };
 
+  const testBackendConnection = async () => {
+    try {
+      setTestMessage('Testing connection...');
+      const response = await fetch('/api/test');
+      const data = await response.json();
+      setTestMessage(`Connection successful: ${data.message}`);
+      console.log('Test response:', data);
+    } catch (error) {
+      setTestMessage(`Connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Test error:', error);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-8">
       <section className="card">
@@ -33,6 +47,17 @@ export default function Home() {
         <p className="mb-4 text-gray-600">
           Upload a clear image of a book cover to extract information such as title, author, and ISBN.
         </p>
+        <div className="mb-4">
+          <button 
+            onClick={testBackendConnection}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Test Backend Connection
+          </button>
+          {testMessage && (
+            <p className="mt-2 text-sm">{testMessage}</p>
+          )}
+        </div>
         <ImageUploader
           onUploadStart={handleUploadStart}
           onBookDataReceived={handleBookDataReceived}
