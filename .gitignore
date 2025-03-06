@@ -1,1 +1,1 @@
-# dependencies\nnode_modules\n\n# build\ndist\n.next\nbuild\n\n# misc\n.DS_Store\n.env\n.turbo\n\n# uploads\nuploads/
+# dependencies\nnode_modules/\n\n# build\ndist/\n.next/\nbuild/\n\n# misc\n.DS_Store\n.env\n.turbo/\n\n# uploads\nuploads/
