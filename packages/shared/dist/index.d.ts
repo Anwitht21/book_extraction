@@ -6,6 +6,14 @@ export interface BookData {
     publicationYear?: number;
     coverImageUrl?: string;
     description?: string;
+    extractedText?: string;
+    classification?: BookClassification;
+    pageCount?: number;
+    categories?: string[];
+}
+export interface BookClassification {
+    isFiction: boolean;
+    confidence: number;
 }
 export interface ImageUploadResponse {
     success: boolean;

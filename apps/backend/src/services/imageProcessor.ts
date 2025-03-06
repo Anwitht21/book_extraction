@@ -3,6 +3,8 @@ import { BookData, isValidISBN } from 'shared';
 import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
+import { isBookCover, classifyBook, extractBookText, extractBookTitleAndAuthor } from './openaiService';
+import { GoogleBooksService } from './googleBooksService';
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(process.cwd(), 'uploads');
@@ -10,6 +12,9 @@ if (!fs.existsSync(uploadsDir)) {
   console.log('Creating uploads directory:', uploadsDir);
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
+
+// Initialize Google Books Service
+const googleBooksService = new GoogleBooksService();
 
 /**
  * Process a book cover image to extract book data
@@ -26,55 +31,92 @@ export async function processBookCover(imagePath: string): Promise<BookData> {
       throw new Error(`File does not exist: ${imagePath}`);
     }
     
-    // Step 1: Validate the image is a book cover
-    console.log('Step 1: Validating image is a book cover');
-    const isBookCover = await validateImageIsBook(imagePath);
-    if (!isBookCover) {
+    // Step 1: Validate the image is a book cover using OpenAI GPT-4o mini
+    console.log('Step 1: Validating image is a book cover using OpenAI GPT-4o mini');
+    const isValidBookCover = await isBookCover(imagePath);
+    if (!isValidBookCover) {
       console.log('Image validation failed: Not a book cover');
-      throw new Error('The uploaded image does not appear to be a book cover');
+      throw new Error('The uploaded image does not appear to be a book cover. Please retake the photo.');
     }
-    console.log('Image validation passed');
+    console.log('Image validation passed: This is a book cover');
 
-    // Step 2: Initialize Tesseract.js worker for OCR
-    console.log('Step 2: Initializing OCR');
-    const worker = await createWorker('eng');
+    // Step 2: Extract book title and author using OpenAI GPT-4o mini
+    console.log('Step 2: Extracting book title and author using OpenAI GPT-4o mini');
+    const { title: extractedTitle, author: extractedAuthor } = await extractBookTitleAndAuthor(imagePath);
+    console.log('Extracted title:', extractedTitle);
+    console.log('Extracted author:', extractedAuthor);
+
+    // Step 3: Initialize Tesseract.js worker for OCR (for additional text extraction)
+    console.log('Step 3: Initializing OCR for additional text extraction');
+    const worker = await createWorker();
     
-    // Step 3: Recognize text from the image
-    console.log('Step 3: Recognizing text from image');
-    const { data } = await worker.recognize(imagePath);
+    // Step 4: Recognize text from the image
+    console.log('Step 4: Recognizing text from image');
+    const result = await worker.recognize(imagePath);
     await worker.terminate();
-    console.log('Recognized text:', data.text.substring(0, 100) + '...');
+    console.log('Recognized text:', result.data.text.substring(0, 100) + '...');
     
-    // Step 4: Extract basic book data from the recognized text
-    console.log('Step 4: Extracting book data from text');
-    const extractedData = extractBookData(data.text);
+    // Step 5: Extract ISBN and other data from the recognized text
+    console.log('Step 5: Extracting ISBN and other data from text');
+    const extractedData = extractBookData(result.data.text, extractedTitle, extractedAuthor);
     console.log('Extracted data:', extractedData);
     
-    // Step 5: Identify the book using Open Library API
-    console.log('Step 5: Identifying book using Open Library API');
+    // Step 6: Identify the book using Open Library API
+    console.log('Step 6: Identifying book using Open Library API');
     const bookInfo = await identifyBookByTitle(extractedData.title, extractedData.author);
     console.log('Book info from API:', bookInfo);
     
-    // Step 6: Fetch book excerpt if available
-    console.log('Step 6: Fetching book excerpt');
-    let description = '';
-    if (bookInfo && bookInfo.openLibraryID) {
-      description = await fetchBookExcerpt(bookInfo.openLibraryID);
-      console.log('Fetched description:', description.substring(0, 100) + '...');
+    // Step 7: Get more accurate book details from Google Books API
+    console.log('Step 7: Getting book details from Google Books API');
+    const bookTitle = bookInfo?.title || extractedData.title;
+    const bookAuthor = bookInfo?.author || extractedData.author;
+    const googleBooksDetails = await googleBooksService.getBookDetails(bookTitle, bookAuthor);
+    console.log('Google Books details:', googleBooksDetails);
+    
+    // Step 8: Classify the book as fiction or non-fiction using OpenAI GPT-4o mini
+    console.log('Step 8: Classifying book as fiction or non-fiction using OpenAI GPT-4o mini');
+    const finalTitle = googleBooksDetails.title || bookTitle;
+    const finalAuthor = googleBooksDetails.author || bookAuthor;
+    const classification = await classifyBook(imagePath, finalTitle, finalAuthor);
+    console.log('Book classification:', classification);
+    
+    // Step 9: Get book content from Google Books API
+    console.log('Step 9: Getting book content from Google Books API');
+    const bookContent = await googleBooksService.getBookContent(finalTitle, finalAuthor);
+    console.log('Book content from Google Books:', bookContent.substring(0, 100) + '...');
+    
+    // Step 10: Extract text from the first pages using OpenAI GPT-4o mini as a fallback
+    console.log('Step 10: Extracting text from first pages using OpenAI GPT-4o mini (fallback)');
+    let extractedText = '';
+    if (!bookContent || bookContent === 'No book content available.' || bookContent === 'Failed to retrieve book content.') {
+      extractedText = await extractBookText(finalTitle, finalAuthor, classification.isFiction);
+      console.log('Extracted text from OpenAI GPT-4o mini:', extractedText.substring(0, 100) + '...');
     } else {
-      console.log('No Open Library ID available, skipping excerpt fetch');
+      extractedText = bookContent;
     }
     
-    // Step 7: Combine all data
-    console.log('Step 7: Combining all data');
+    // Step 11: Fetch book excerpt if available (as a fallback for description)
+    console.log('Step 11: Fetching book excerpt for description');
+    let description = googleBooksDetails.description || '';
+    if (!description && bookInfo && bookInfo.openLibraryID) {
+      description = await fetchBookExcerpt(bookInfo.openLibraryID);
+      console.log('Fetched description from Open Library:', description.substring(0, 100) + '...');
+    } else {
+      console.log('Using Google Books description or no Open Library ID available');
+    }
+    
+    // Step 12: Combine all data
+    console.log('Step 12: Combining all data');
     const bookData: BookData = {
-      title: bookInfo?.title || extractedData.title,
-      author: bookInfo?.author || extractedData.author,
-      isbn: bookInfo?.isbn || extractedData.isbn,
-      publisher: bookInfo?.publisher,
-      publicationYear: bookInfo?.publicationYear,
+      title: finalTitle,
+      author: finalAuthor,
+      isbn: googleBooksDetails.isbn || bookInfo?.isbn || extractedData.isbn,
+      publisher: googleBooksDetails.publisher || bookInfo?.publisher,
+      publicationYear: googleBooksDetails.publicationYear || bookInfo?.publicationYear,
       description: description || 'No description available',
-      coverImageUrl: bookInfo?.coverImageUrl
+      coverImageUrl: googleBooksDetails.coverImageUrl || bookInfo?.coverImageUrl,
+      extractedText: extractedText,
+      classification: classification
     };
     
     console.log('Final book data:', bookData);
@@ -82,7 +124,7 @@ export async function processBookCover(imagePath: string): Promise<BookData> {
     return bookData;
   } catch (error) {
     console.error('Error processing book cover:', error);
-    throw new Error('Failed to process book cover image');
+    throw new Error(error instanceof Error ? error.message : 'Failed to process book cover image');
   }
 }
 
@@ -96,12 +138,12 @@ export async function processBookCover(imagePath: string): Promise<BookData> {
 async function validateImageIsBook(imagePath: string): Promise<boolean> {
   try {
     // Simple validation: Check if the image contains text using OCR
-    const worker = await createWorker('eng');
-    const { data } = await worker.recognize(imagePath);
+    const worker = await createWorker();
+    const result = await worker.recognize(imagePath);
     await worker.terminate();
     
     // If the image contains a significant amount of text, it's likely a book cover
-    const textLength = data.text.trim().length;
+    const textLength = result.data.text.trim().length;
     return textLength > 20; // Arbitrary threshold
     
     // Note: In a production environment, you would use:
@@ -117,20 +159,14 @@ async function validateImageIsBook(imagePath: string): Promise<boolean> {
 /**
  * Extract book data from recognized text
  * @param text Text recognized from the image
+ * @param title Book title from OpenAI
+ * @param author Book author from OpenAI
  * @returns Book data object with basic information
  */
-function extractBookData(text: string): BookData {
+function extractBookData(text: string, title: string, author: string): BookData {
   // Look for ISBN pattern
   const isbnMatch = text.match(/(?:ISBN(?:-1[03])?:?\s*)?(?=[0-9X]{10}|(?=(?:[0-9]+[- ]){3})[- 0-9X]{13}|97[89][0-9]{10}|(?=(?:[0-9]+[- ]){4})[- 0-9]{17})/i);
   const isbn = isbnMatch ? isbnMatch[0].replace(/[^0-9X]/gi, '') : '0000000000000';
-  
-  // Extract title (simplified approach)
-  const lines = text.split('\n').filter(line => line.trim().length > 0);
-  const title = lines.length > 0 ? lines[0] : 'Unknown Title';
-  
-  // Extract author (simplified approach)
-  const authorLine = lines.find(line => line.toLowerCase().includes('by '));
-  const author = authorLine ? authorLine.replace(/by /i, '').trim() : 'Unknown Author';
   
   return {
     title,

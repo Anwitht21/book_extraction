@@ -45,7 +45,7 @@ export default function Home() {
       <section className="card">
         <h2 className="text-2xl font-bold mb-4">Upload Book Cover</h2>
         <p className="mb-4 text-gray-600">
-          Upload a clear image of a book cover to extract information such as title, author, and ISBN.
+          Upload a clear image of a book cover to extract information and text from its first pages.
         </p>
         <div className="mb-4">
           <button 
@@ -66,6 +66,7 @@ export default function Home() {
         {loading && (
           <div className="mt-4 text-center">
             <p className="text-gray-600">Processing image...</p>
+            <p className="text-sm text-gray-500">This may take a moment as we analyze the book cover and extract text...</p>
           </div>
         )}
         {error && (
@@ -78,7 +79,7 @@ export default function Home() {
       {bookData && (
         <section className="card">
           <h2 className="text-2xl font-bold mb-4">Book Details</h2>
-          <BookDetails book={bookData} />
+          <BookDetails bookData={bookData} />
         </section>
       )}
     </div>

@@ -2,6 +2,26 @@ import express from 'express';
 import cors from 'cors';
 import { uploadRoutes } from './routes/upload';
 import { bookRoutes } from './routes/book';
+import path from 'path';
+import fs from 'fs';
+
+// Load environment variables from .env file
+const envPath = path.resolve(process.cwd(), '.env');
+if (fs.existsSync(envPath)) {
+  console.log('Loading environment variables from .env file');
+  require('dotenv').config({ path: envPath });
+} else {
+  console.warn('No .env file found. Make sure to set OPENAI_API_KEY and GOOGLE_BOOKS_API_KEY environment variables.');
+}
+
+// Check for required API keys
+if (!process.env.OPENAI_API_KEY) {
+  console.warn('OPENAI_API_KEY is not set. Some features may not work properly.');
+}
+
+if (!process.env.GOOGLE_BOOKS_API_KEY) {
+  console.warn('GOOGLE_BOOKS_API_KEY is not set. Book content retrieval may be limited.');
+}
 
 const app = express();
 const PORT = process.env.PORT || 3005;

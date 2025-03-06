@@ -3,56 +3,91 @@
 import { BookData } from 'shared';
 
 interface BookDetailsProps {
-  book: BookData;
+  bookData: BookData;
 }
 
-export default function BookDetails({ book }: BookDetailsProps) {
+export default function BookDetails({ bookData }: BookDetailsProps) {
+  const {
+    title,
+    author,
+    isbn,
+    publisher,
+    publicationYear,
+    description,
+    coverImageUrl,
+    extractedText,
+    classification
+  } = bookData;
+
+  // These properties might not be in the BookData interface yet
+  const pageCount = (bookData as any).pageCount;
+  const categories = (bookData as any).categories;
+
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {book.coverImageUrl && (
-          <div className="md:col-span-1">
+    <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+      <div className="md:flex">
+        {coverImageUrl && (
+          <div className="md:flex-shrink-0">
             <img
-              src={book.coverImageUrl}
-              alt={`${book.title} cover`}
-              className="w-full max-w-xs mx-auto rounded-md shadow-md"
+              className="h-48 w-full object-cover md:w-48"
+              src={coverImageUrl}
+              alt={`Cover of ${title}`}
             />
           </div>
         )}
-        
-        <div className={book.coverImageUrl ? 'md:col-span-2' : 'md:col-span-3'}>
-          <h3 className="text-xl font-bold">{book.title}</h3>
-          <p className="text-gray-700 mb-2">by {book.author}</p>
-          
-          <div className="mt-4 space-y-2">
-            <div className="flex">
-              <span className="font-semibold w-32">ISBN:</span>
-              <span>{book.isbn}</span>
-            </div>
-            
-            {book.publisher && (
-              <div className="flex">
-                <span className="font-semibold w-32">Publisher:</span>
-                <span>{book.publisher}</span>
-              </div>
-            )}
-            
-            {book.publicationYear && (
-              <div className="flex">
-                <span className="font-semibold w-32">Published:</span>
-                <span>{book.publicationYear}</span>
-              </div>
-            )}
+        <div className="p-8">
+          <div className="uppercase tracking-wide text-sm text-indigo-500 font-semibold">
+            {classification?.isFiction ? 'Fiction' : 'Non-Fiction'}
+            {classification?.confidence && ` (${Math.round(classification.confidence * 100)}% confidence)`}
           </div>
+          <h1 className="mt-1 text-2xl font-bold text-gray-900">{title}</h1>
+          <p className="mt-2 text-gray-600">by {author}</p>
+          
+          {(publisher || publicationYear) && (
+            <p className="mt-2 text-gray-500">
+              {publisher && `Published by ${publisher}`}
+              {publisher && publicationYear && ', '}
+              {publicationYear && `${publicationYear}`}
+              {pageCount && ` • ${pageCount} pages`}
+            </p>
+          )}
+          
+          {isbn && (
+            <p className="mt-2 text-sm text-gray-500">ISBN: {isbn}</p>
+          )}
+          
+          {categories && categories.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {categories.map((category: string, index: number) => (
+                <span 
+                  key={index} 
+                  className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full"
+                >
+                  {category}
+                </span>
+              ))}
+            </div>
+          )}
+          
+          {description && (
+            <div className="mt-4">
+              <h2 className="text-lg font-semibold text-gray-900">Description</h2>
+              <p className="mt-2 text-gray-600">{description}</p>
+            </div>
+          )}
+          
+          {extractedText && (
+            <div className="mt-6 border-t pt-4">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Book Content
+              </h2>
+              <div className="mt-2 text-gray-600 bg-gray-50 p-4 rounded border border-gray-200 max-h-64 overflow-y-auto">
+                <p className="whitespace-pre-line">{extractedText}</p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
-      
-      {book.description && (
-        <div className="mt-6">
-          <h4 className="text-lg font-semibold mb-2">Description</h4>
-          <p className="text-gray-700">{book.description}</p>
-        </div>
-      )}
     </div>
   );
 } 
