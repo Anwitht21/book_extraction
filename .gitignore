@@ -1,1 +1,50 @@
-# dependencies\nnode_modules/\n\n# build\ndist/\n.next/\nbuild/\n\n# misc\n.DS_Store\n.env\n.turbo/\n\n# uploads\nuploads/
+# dependencies
+node_modules/
+*node_modules/*
+.pnp
+.pnp.js
+
+# build
+dist/
+.next/
+build/
+out/
+
+# testing
+/coverage
+/test
+*.test.js
+/apps/backend/test/
+
+# misc
+.DS_Store
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.turbo/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# uploads and temporary files
+uploads/
+/apps/backend/uploads/
+/apps/backend/test-upload.js
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+
+# cache
+.cache/
+.eslintcache
+.npm
