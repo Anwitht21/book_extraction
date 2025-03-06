@@ -4,7 +4,7 @@ import { uploadRoutes } from './routes/upload';
 import { bookRoutes } from './routes/book';
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
 
 // Middleware
 app.use(cors());
