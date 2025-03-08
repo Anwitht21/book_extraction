@@ -35,14 +35,65 @@ export class PdfScraperService {
   }
 
   /**
+   * Find a book by ISBN
+   * @param isbn ISBN to search for
+   * @returns Promise with book preview text or null if not found
+   */
+  async findBookByIsbn(isbn: string): Promise<string | null> {
+    try {
+      console.log(`Searching for book with ISBN: ${isbn}`);
+      
+      // Build search query specifically for ISBN
+      const query = `isbn:${isbn}`;
+      
+      // Get book information from Google Books API
+      const bookInfo = await this.searchGoogleBooks(query);
+      
+      if (!bookInfo) {
+        console.log(`No book found with ISBN: ${isbn}`);
+        return null;
+      }
+      
+      // Determine if the book is fiction or non-fiction
+      const isFiction = this.isFiction(bookInfo);
+      console.log(`Book "${bookInfo.volumeInfo?.title}" determined to be ${isFiction ? 'fiction' : 'non-fiction'}`);
+      
+      // Extract preview text based on fiction/non-fiction status
+      const previewText = await this.extractPreviewText(bookInfo, isFiction);
+      
+      if (!previewText) {
+        console.log('No preview text available');
+        return null;
+      }
+      
+      return previewText;
+    } catch (error) {
+      console.error(`Error finding book with ISBN ${isbn}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Get preview text from a book by title and author
    * @param title Book title
    * @param author Book author (optional)
+   * @param isbn ISBN (optional) - if provided, will be used to prioritize matching editions
    * @returns Promise with book preview text or null if not found
    */
-  async findBookPdf(title: string, author?: string): Promise<string | null> {
+  async findBookPdf(title: string, author?: string, isbn?: string): Promise<string | null> {
     try {
-      console.log(`Searching for preview of "${title}" ${author ? `by ${author}` : ''}`);
+      console.log(`Searching for preview of "${title}" ${author ? `by ${author}` : ''} ${isbn ? `ISBN: ${isbn}` : ''}`);
+      
+      // If ISBN is provided, try searching by ISBN first
+      if (isbn) {
+        console.log(`Trying to find book with ISBN: ${isbn}`);
+        const isbnResult = await this.findBookByIsbn(isbn);
+        if (isbnResult) {
+          console.log(`Found book by ISBN: ${isbn}`);
+          return isbnResult;
+        }
+        console.log(`No preview available for ISBN: ${isbn}, falling back to title/author search`);
+      }
       
       // Build search query
       let query = `intitle:${title}`;
@@ -78,24 +129,115 @@ export class PdfScraperService {
   }
 
   /**
+   * Extract ISBNs from book information
+   * @param bookInfo Book information from Google Books API
+   * @returns Object with ISBN-10 and ISBN-13 if available
+   */
+  private extractIsbns(bookInfo: any): { isbn10?: string, isbn13?: string } {
+    const result: { isbn10?: string, isbn13?: string } = {};
+    
+    if (bookInfo?.volumeInfo?.industryIdentifiers) {
+      for (const identifier of bookInfo.volumeInfo.industryIdentifiers) {
+        if (identifier.type === 'ISBN_10') {
+          result.isbn10 = identifier.identifier;
+        } else if (identifier.type === 'ISBN_13') {
+          result.isbn13 = identifier.identifier;
+        }
+      }
+    }
+    
+    return result;
+  }
+
+  /**
    * Search Google Books API for book information
    * @param query Search query
    * @returns Book information or null if not found
    */
   private async searchGoogleBooks(query: string): Promise<any> {
     try {
-      const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&key=${this.apiKey}`;
+      // Increase maxResults to get more potential editions
+      const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=10&key=${this.apiKey}`;
       
       const response = await axios.get(url, {
         timeout: 10000 // 10 seconds timeout
       });
       
       if (!response.data.items || response.data.items.length === 0) {
+        console.log(`No books found for query: "${query}"`);
         return null;
       }
       
-      // Get the first result
-      return response.data.items[0];
+      // Process all results to find the best edition with preview
+      const items = response.data.items;
+      console.log(`Found ${items.length} editions for query: "${query}"`);
+      
+      // Log all editions with their viewability status and ISBNs
+      items.forEach((item: any, index: number) => {
+        const isbns = this.extractIsbns(item);
+        const isbnText = [
+          isbns.isbn13 ? `ISBN-13: ${isbns.isbn13}` : '',
+          isbns.isbn10 ? `ISBN-10: ${isbns.isbn10}` : ''
+        ].filter(Boolean).join(', ');
+        
+        console.log(`Edition ${index + 1}: "${item.volumeInfo?.title}" by ${item.volumeInfo?.authors?.join(', ') || 'Unknown'}`);
+        console.log(`  Viewability: ${item.accessInfo?.viewability || 'Unknown'}, Embeddable: ${item.accessInfo?.embeddable || false}`);
+        console.log(`  ${isbnText || 'No ISBNs found'}`);
+      });
+      
+      // Priority 1: Editions with PARTIAL or ALL_PAGES viewability that are embeddable
+      const bestEdition = items.find(item => 
+        (item.accessInfo?.viewability === 'PARTIAL' || item.accessInfo?.viewability === 'ALL_PAGES') && 
+        item.accessInfo?.embeddable === true
+      );
+      
+      if (bestEdition) {
+        const isbns = this.extractIsbns(bestEdition);
+        const isbnText = [
+          isbns.isbn13 ? `ISBN-13: ${isbns.isbn13}` : '',
+          isbns.isbn10 ? `ISBN-10: ${isbns.isbn10}` : ''
+        ].filter(Boolean).join(', ');
+        
+        console.log(`Selected best edition with preview available: "${bestEdition.volumeInfo?.title}"`);
+        console.log(`  Viewability: ${bestEdition.accessInfo?.viewability}, ${isbnText}`);
+        return bestEdition;
+      }
+      
+      // Priority 2: Any edition with PARTIAL or ALL_PAGES viewability
+      const editionWithPartialView = items.find(item => 
+        item.accessInfo?.viewability === 'PARTIAL' || item.accessInfo?.viewability === 'ALL_PAGES'
+      );
+      
+      if (editionWithPartialView) {
+        const isbns = this.extractIsbns(editionWithPartialView);
+        const isbnText = [
+          isbns.isbn13 ? `ISBN-13: ${isbns.isbn13}` : '',
+          isbns.isbn10 ? `ISBN-10: ${isbns.isbn10}` : ''
+        ].filter(Boolean).join(', ');
+        
+        console.log(`Selected edition with partial view: "${editionWithPartialView.volumeInfo?.title}"`);
+        console.log(`  Viewability: ${editionWithPartialView.accessInfo?.viewability}, ${isbnText}`);
+        return editionWithPartialView;
+      }
+      
+      // Priority 3: Any edition with textSnippet
+      const editionWithSnippet = items.find(item => item.searchInfo?.textSnippet);
+      
+      if (editionWithSnippet) {
+        const isbns = this.extractIsbns(editionWithSnippet);
+        const isbnText = [
+          isbns.isbn13 ? `ISBN-13: ${isbns.isbn13}` : '',
+          isbns.isbn10 ? `ISBN-10: ${isbns.isbn10}` : ''
+        ].filter(Boolean).join(', ');
+        
+        console.log(`Selected edition with text snippet: "${editionWithSnippet.volumeInfo?.title}"`);
+        console.log(`  ${isbnText}`);
+        return editionWithSnippet;
+      }
+      
+      // Fallback: Use the first result
+      console.log(`No edition with preview found. Using first result: "${items[0].volumeInfo?.title}"`);
+      return items[0];
     } catch (error) {
       console.error('Error searching Google Books API:', error);
       return null;
@@ -205,8 +347,14 @@ export class PdfScraperService {
       const bookId = bookInfo.id;
       const title = bookInfo.volumeInfo?.title || 'Unknown Title';
       const authors = bookInfo.volumeInfo?.authors || ['Unknown Author'];
+      const isbns = this.extractIsbns(bookInfo);
       
+      // Log book information including ISBNs
       console.log(`Book ID: ${bookId}`);
+      console.log(`Title: ${title}`);
+      console.log(`Authors: ${authors.join(', ')}`);
+      if (isbns.isbn13) console.log(`ISBN-13: ${isbns.isbn13}`);
+      if (isbns.isbn10) console.log(`ISBN-10: ${isbns.isbn10}`);
       console.log(`Viewability: ${bookInfo.accessInfo?.viewability || 'Unknown'}`);
       console.log(`Embeddable: ${bookInfo.accessInfo?.embeddable || false}`);
       
@@ -227,27 +375,30 @@ export class PdfScraperService {
       }
       
       // Determine which page to extract based on whether the book is fiction or non-fiction
-      const pageNumber = isFiction ? 2 : 1;
-      console.log(`Target page to extract: ${pageNumber} (${isFiction ? 'fiction' : 'non-fiction'})`);
+      // For fiction books, go to the second page after the full page of text (page 5)
+      // For non-fiction books, stay on the original full page of text (page 4)
+      const pageNumber = isFiction ? 5 : 4;
+      console.log(`Target page to extract: ${pageNumber} (${isFiction ? 'fiction - second page after full text' : 'non-fiction - first full page of text'})`);
       
       // Generate embedded viewer HTML if the book is embeddable
       if (bookInfo.accessInfo?.embeddable) {
         console.log('Book is embeddable, generating embedded viewer HTML');
         
         // Create a special response object with both text and HTML
-        const embedHtml = this.generateEmbeddedViewerHtml(bookId, pageNumber, title, authors, isFiction);
+        const embedHtml = this.generateEmbeddedViewerHtml(bookId, pageNumber, title, authors, isFiction, isbns);
         
         // Return a JSON string that includes both the placeholder text and the HTML
         return JSON.stringify({
           text: 'Preview available in embedded viewer',
-          html: embedHtml
+          html: embedHtml,
+          isbns
         });
       }
       
       // If the book is not embeddable, fall back to the description
       console.log('Book is not embeddable, using description as fallback');
       if (bookInfo.volumeInfo?.description) {
-        return this.formatPreviewText(title, authors, bookInfo.volumeInfo.description, isFiction, true);
+        return this.formatPreviewText(title, authors, bookInfo.volumeInfo.description, isFiction, true, isbns);
       }
       
       console.log('No description available');
@@ -265,11 +416,20 @@ export class PdfScraperService {
    * @param title Book title
    * @param authors Book authors
    * @param isFiction Whether the book is fiction or non-fiction
+   * @param isbns Object with ISBN-10 and ISBN-13 if available
    * @returns HTML for embedding the viewer
    */
-  private generateEmbeddedViewerHtml(bookId: string, pageNumber: number, title: string, authors: string[], isFiction: boolean): string {
+  private generateEmbeddedViewerHtml(
+    bookId: string, 
+    pageNumber: number, 
+    title: string, 
+    authors: string[], 
+    isFiction: boolean,
+    isbns: { isbn10?: string, isbn13?: string } = {}
+  ): string {
     const authorText = authors.length > 0 ? `by ${authors.join(', ')}` : '';
     const fictionStatus = isFiction ? 'Fiction' : 'Non-fiction';
+    const isbnText = isbns.isbn13 ? `ISBN: ${isbns.isbn13}` : (isbns.isbn10 ? `ISBN: ${isbns.isbn10}` : '');
     
     return `
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
@@ -284,12 +444,20 @@ export class PdfScraperService {
     .header { padding: 10px; background-color: #f5f5f5; border-bottom: 1px solid #ddd; }
     .book-title { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
     .book-info { font-size: 14px; color: #555; }
+    .isbn-info { font-size: 12px; color: #777; margin-top: 3px; }
     .viewer-container { flex: 1; width: 100%; height: calc(100% - 60px); }
     #viewerCanvas { width: 100%; height: 100%; }
     .error-message { color: red; padding: 20px; text-align: center; }
+    .page-info { position: fixed; bottom: 10px; right: 10px; background: rgba(255,255,255,0.8); padding: 5px; font-size: 12px; z-index: 1000; }
   </style>
   <script type="text/javascript" src="https://www.google.com/books/jsapi.js"></script>
   <script type="text/javascript">
+    var viewer = null;
+    var isFiction = ${isFiction};
+    var currentPage = 0;
+    var bookId = "${bookId}";
+    var isbn = "${isbns.isbn13 || isbns.isbn10 || ''}";
+    
     google.books.load();
     
     function alertNotFound() {
@@ -297,27 +465,53 @@ export class PdfScraperService {
         '<div class="error-message">This book preview is not available.</div>';
     }
     
-    function alertLoadFailed() {
-      document.getElementById('viewerCanvas').innerHTML = 
-        '<div class="error-message">Failed to load the book preview. Please try again later.</div>';
+    function updatePageInfo() {
+      if (!viewer) return;
+      
+      var pageInfoElement = document.getElementById('pageInfo');
+      if (pageInfoElement) {
+        currentPage = viewer.getPageNumber();
+        pageInfoElement.innerHTML = 'Page ' + currentPage;
+      }
+    }
+    
+    function bookLoadSuccess() {
+      console.log('Book loaded successfully');
+      
+      // Create page info element
+      var pageInfoElement = document.createElement('div');
+      pageInfoElement.id = 'pageInfo';
+      pageInfoElement.className = 'page-info';
+      document.body.appendChild(pageInfoElement);
+      
+      // Update page info immediately
+      updatePageInfo();
+      
+      // Navigate to the appropriate page after a delay
+      setTimeout(function() {
+        // For fiction books, go to page 5 (second page after full text)
+        // For non-fiction books, go to page 4 (first full page of text)
+        var targetPage = isFiction ? 5 : 4;
+        var pagesToAdvance = targetPage - 1; // Subtract 1 because we start at page 1
+        
+        console.log('Navigating to page ' + targetPage + ' (' + (isFiction ? 'fiction - second page after full text' : 'non-fiction - first full page of text') + ')');
+        
+        // Go to target page by navigating forward from page 1
+        for (var i = 0; i < pagesToAdvance; i++) {
+          setTimeout(function() {
+            viewer.nextPage();
+            updatePageInfo();
+          }, i * 500); // Stagger the page turns to ensure they all register
+        }
+      }, 1500);
+      
+      // Set up periodic page info updates
+      setInterval(updatePageInfo, 1000);
     }
     
     function initialize() {
-      var viewer = new google.books.DefaultViewer(document.getElementById('viewerCanvas'));
-      
-      // Load the book with proper callbacks
-      viewer.load('${bookId}', alertNotFound, function() {
-        // Success callback - book loaded successfully
-        console.log('Book loaded successfully');
-        
-        // Navigate to the specified page after a short delay
-        setTimeout(function() {
-          if (viewer.getPageNumber() !== ${pageNumber}) {
-            var success = viewer.goToPage(${pageNumber});
-            console.log('Navigation to page ${pageNumber}: ' + (success ? 'successful' : 'failed'));
-          }
-        }, 1000);
-      });
+      viewer = new google.books.DefaultViewer(document.getElementById('viewerCanvas'));
+      viewer.load(bookId, alertNotFound, bookLoadSuccess);
     }
     
     // Set callback to initialize the viewer when the API is loaded
@@ -328,7 +522,8 @@ export class PdfScraperService {
   <div class="container">
     <div class="header">
       <div class="book-title">${title}</div>
-      <div class="book-info">${authorText} • ${fictionStatus} • Page ${pageNumber}</div>
+      <div class="book-info">${authorText} • ${fictionStatus} • Page ${isFiction ? '5' : '4'}</div>
+      ${isbnText ? `<div class="isbn-info">${isbnText}</div>` : ''}
     </div>
     <div class="viewer-container">
       <div id="viewerCanvas"></div>
@@ -337,6 +532,47 @@ export class PdfScraperService {
 </body>
 </html>
     `;
+  }
+
+  /**
+   * Format preview text with book information
+   * @param title Book title
+   * @param authors Book authors
+   * @param text Preview text
+   * @param isFiction Whether the book is fiction or non-fiction
+   * @param isFallback Whether this is a fallback text
+   * @param isbns Object with ISBN-10 and ISBN-13 if available
+   * @returns Formatted preview text
+   */
+  private formatPreviewText(
+    title: string, 
+    authors: string[] = [], 
+    text: string, 
+    isFiction: boolean, 
+    isFallback: boolean = false,
+    isbns: { isbn10?: string, isbn13?: string } = {}
+  ): string {
+    const authorText = authors.length > 0 ? `by ${authors.join(', ')}` : '';
+    const fictionStatus = isFiction ? 'Fiction' : 'Non-fiction';
+    // For fiction books, use page 5; for non-fiction books, use page 4
+    const pageNumber = isFiction ? 5 : 4;
+    
+    let formattedText = `${title} ${authorText}\nType: ${fictionStatus}\n`;
+    
+    // Add ISBN information if available
+    if (isbns.isbn13 || isbns.isbn10) {
+      formattedText += `ISBN: ${isbns.isbn13 || ''} ${isbns.isbn10 ? `(ISBN-10: ${isbns.isbn10})` : ''}\n`;
+    }
+    
+    if (isFallback) {
+      formattedText += `[Note: This is the book description or snippet, not the actual preview text]\n\n`;
+    } else {
+      formattedText += `Page ${pageNumber} Preview\n\n`;
+    }
+    
+    formattedText += text;
+    
+    return formattedText;
   }
 
   /**
@@ -581,33 +817,6 @@ export class PdfScraperService {
   }
 
   /**
-   * Format preview text with book information
-   * @param title Book title
-   * @param authors Book authors
-   * @param text Preview text
-   * @param isFiction Whether the book is fiction or non-fiction
-   * @param isFallback Whether this is a fallback text
-   * @returns Formatted preview text
-   */
-  private formatPreviewText(title: string, authors: string[] = [], text: string, isFiction: boolean, isFallback: boolean = false): string {
-    const authorText = authors.length > 0 ? `by ${authors.join(', ')}` : '';
-    const fictionStatus = isFiction ? 'Fiction' : 'Non-fiction';
-    const pageNumber = isFiction ? 2 : 1;
-    
-    let formattedText = `${title} ${authorText}\nType: ${fictionStatus}\n`;
-    
-    if (isFallback) {
-      formattedText += `[Note: This is the book description or snippet, not the actual preview text]\n\n`;
-    } else {
-      formattedText += `Page ${pageNumber} Preview\n\n`;
-    }
-    
-    formattedText += text;
-    
-    return formattedText;
-  }
-
-  /**
    * Download a PDF and extract its text content (for public domain books only)
    * @param url URL of the PDF
    * @param isFiction Whether the book is fiction or non-fiction
@@ -637,9 +846,9 @@ export class PdfScraperService {
       // Extract text from the PDF (specific page based on fiction/non-fiction)
       const dataBuffer = fs.readFileSync(filename);
       
-      // For fiction books, we want page 2, for non-fiction books, we want page 1
-      // Page numbers in pdf-parse are 0-indexed
-      const pageToExtract = isFiction ? 1 : 0;
+      // For fiction books, we want page 5; for non-fiction books, we want page 4
+      // Page numbers in pdf-parse are 0-indexed, so we use 4 for page 5 and 3 for page 4
+      const pageToExtract = isFiction ? 4 : 3;
       
       // First, get the total number of pages to make sure we don't exceed it
       const pdfData = await pdfParse(dataBuffer, { max: 1 });
