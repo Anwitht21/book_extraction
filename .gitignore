@@ -48,3 +48,7 @@ uploads/
 .cache/
 .eslintcache
 .npm
+
+
+/apps/backend/temp
+/apps/backend/test

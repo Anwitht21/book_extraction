@@ -16,6 +16,7 @@ export default function BookDetails({ bookData }: BookDetailsProps) {
     description,
     coverImageUrl,
     extractedText,
+    embeddedViewerHtml,
     classification
   } = bookData;
 
@@ -76,13 +77,34 @@ export default function BookDetails({ bookData }: BookDetailsProps) {
             </div>
           )}
           
-          {extractedText && (
+          {extractedText && !embeddedViewerHtml && (
             <div className="mt-6 border-t pt-4">
               <h2 className="text-lg font-semibold text-gray-900">
                 Book Content
               </h2>
               <div className="mt-2 text-gray-600 bg-gray-50 p-4 rounded border border-gray-200 max-h-64 overflow-y-auto">
                 <p className="whitespace-pre-line">{extractedText}</p>
+              </div>
+            </div>
+          )}
+          
+          {embeddedViewerHtml && (
+            <div className="mt-6 border-t pt-4">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Book Content
+              </h2>
+              <div className="mt-2" style={{ height: '800px' }}>
+                <iframe
+                  srcDoc={embeddedViewerHtml}
+                  width="100%"
+                  height="100%"
+                  frameBorder="0"
+                  allowFullScreen
+                  sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-downloads allow-modals allow-orientation-lock allow-pointer-lock allow-presentation"
+                  title={`${title} Preview`}
+                  className="rounded border border-gray-200"
+                  style={{ minHeight: '800px' }}
+                ></iframe>
               </div>
             </div>
           )}

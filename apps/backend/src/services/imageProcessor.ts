@@ -5,6 +5,7 @@ import path from 'path';
 import fetch from 'node-fetch';
 import { isBookCover, classifyBook, extractBookText, extractBookTitleAndAuthor } from './openaiService';
 import { GoogleBooksService } from './googleBooksService';
+import { PdfScraperService } from './pdfScraperService';
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(process.cwd(), 'uploads');
@@ -15,6 +16,9 @@ if (!fs.existsSync(uploadsDir)) {
 
 // Initialize Google Books Service
 const googleBooksService = new GoogleBooksService();
+
+// Initialize PDF Scraper Service
+const pdfScraperService = new PdfScraperService();
 
 /**
  * Process a book cover image to extract book data
@@ -80,19 +84,47 @@ export async function processBookCover(imagePath: string): Promise<BookData> {
     const classification = await classifyBook(imagePath, finalTitle, finalAuthor);
     console.log('Book classification:', classification);
     
-    // Step 9: Get book content from Google Books API
-    console.log('Step 9: Getting book content from Google Books API');
-    const bookContent = await googleBooksService.getBookContent(finalTitle, finalAuthor);
-    console.log('Book content from Google Books:', bookContent.substring(0, 100) + '...');
-    
-    // Step 10: Extract text from the first pages using OpenAI GPT-4o mini as a fallback
-    console.log('Step 10: Extracting text from first pages using OpenAI GPT-4o mini (fallback)');
+    // Step 9: Try to get full book text from PDF scraper
+    console.log('Step 9: Searching for full book text from PDF');
     let extractedText = '';
-    if (!bookContent || bookContent === 'No book content available.' || bookContent === 'Failed to retrieve book content.') {
+    let embeddedViewerHtml = '';
+    let pdfText = null;
+
+    try {
+      // Make multiple attempts to find the PDF with different search variations
+      console.log('Attempting to find PDF with multiple search variations...');
+      pdfText = await pdfScraperService.findBookPdf(finalTitle, finalAuthor);
+      
+      // Check if the result is a special JSON response with both text and HTML
+      if (pdfText && pdfText.trim().startsWith('{') && pdfText.includes('"text"') && pdfText.includes('"html"')) {
+        try {
+          const parsedResult = JSON.parse(pdfText);
+          console.log('Found embedded viewer HTML and text');
+          extractedText = parsedResult.text;
+          embeddedViewerHtml = parsedResult.html;
+        } catch (parseError) {
+          console.error('Error parsing JSON response:', parseError);
+          extractedText = pdfText;
+        }
+      } else if (pdfText && pdfText.trim().startsWith('<!DOCTYPE html')) {
+        console.log('Found embedded viewer HTML');
+        embeddedViewerHtml = pdfText;
+        // Set a placeholder for extracted text
+        extractedText = `Preview available in embedded viewer`;
+      } else if (pdfText) {
+        console.log('Found book text from PDF or alternative source');
+        extractedText = pdfText;
+      }
+    } catch (error) {
+      console.error('Error finding PDF:', error);
+      pdfText = null;
+    }
+
+    if (!pdfText) {
+      // Step 10: If no PDF found, use OpenAI to generate sample text
+      console.log('Step 10: No PDF found, using OpenAI to generate sample text');
       extractedText = await extractBookText(finalTitle, finalAuthor, classification.isFiction);
-      console.log('Extracted text from OpenAI GPT-4o mini:', extractedText.substring(0, 100) + '...');
-    } else {
-      extractedText = bookContent;
+      console.log('Generated text from OpenAI:', extractedText.substring(0, 100) + '...');
     }
     
     // Step 11: Fetch book excerpt if available (as a fallback for description)
@@ -116,6 +148,7 @@ export async function processBookCover(imagePath: string): Promise<BookData> {
       description: description || 'No description available',
       coverImageUrl: googleBooksDetails.coverImageUrl || bookInfo?.coverImageUrl,
       extractedText: extractedText,
+      embeddedViewerHtml: embeddedViewerHtml || undefined,
       classification: classification
     };
     

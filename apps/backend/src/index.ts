@@ -8,7 +8,7 @@ import fs from 'fs';
 // Load environment variables from .env file
 const envPath = path.resolve(process.cwd(), '.env');
 if (fs.existsSync(envPath)) {
-  console.log('Loading environment variables from .env file');
+  console.log('Loading environment variables from .env file:', envPath);
   require('dotenv').config({ path: envPath });
 } else {
   console.warn('No .env file found. Make sure to set OPENAI_API_KEY and GOOGLE_BOOKS_API_KEY environment variables.');
@@ -21,6 +21,13 @@ if (!process.env.OPENAI_API_KEY) {
 
 if (!process.env.GOOGLE_BOOKS_API_KEY) {
   console.warn('GOOGLE_BOOKS_API_KEY is not set. Book content retrieval may be limited.');
+}
+
+// Ensure temp directory exists for PDF downloads
+const tempDir = path.join(process.cwd(), 'temp');
+if (!fs.existsSync(tempDir)) {
+  console.log('Creating temp directory for PDF downloads:', tempDir);
+  fs.mkdirSync(tempDir, { recursive: true });
 }
 
 const app = express();

@@ -7,6 +7,7 @@ export interface BookData {
     coverImageUrl?: string;
     description?: string;
     extractedText?: string;
+    embeddedViewerHtml?: string;
     classification?: BookClassification;
     pageCount?: number;
     categories?: string[];
