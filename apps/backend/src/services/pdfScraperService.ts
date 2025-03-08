@@ -332,6 +332,100 @@ export class PdfScraperService {
   }
 
   /**
+   * Extract and analyze table of contents to find the true start of the book
+   * @param bookId Google Books volume ID
+   * @returns Promise with the start page number or null if not available
+   */
+  private async findBookStartPage(bookId: string): Promise<number | null> {
+    try {
+      console.log(`Analyzing table of contents for book ID ${bookId} to find true start page`);
+      
+      // Get detailed volume information including table of contents
+      const url = `https://www.googleapis.com/books/v1/volumes/${bookId}?key=${this.apiKey}`;
+      const response = await axios.get(url, {
+        timeout: 10000 // 10 seconds timeout
+      });
+      
+      const volumeInfo = response.data.volumeInfo;
+      
+      // Check if table of contents is available
+      if (volumeInfo?.tableOfContents && Array.isArray(volumeInfo.tableOfContents)) {
+        console.log(`Table of contents found with ${volumeInfo.tableOfContents.length} entries`);
+        
+        // Log the full table of contents for debugging
+        volumeInfo.tableOfContents.forEach((entry: any, index: number) => {
+          console.log(`TOC Entry ${index + 1}: ${JSON.stringify(entry)}`);
+        });
+        
+        // Look for the first chapter or content start
+        for (const entry of volumeInfo.tableOfContents) {
+          // Check if this is a string entry or an object with title/pageNumber
+          if (typeof entry === 'string') {
+            // Parse string entries (older API format)
+            const entryText = entry.toLowerCase();
+            const pageMatch = entryText.match(/page\s*(\d+)|p\.\s*(\d+)/i);
+            const isChapterStart = /chapter\s*1|chapter\s*one|introduction|prologue|part\s*one|part\s*1|begin/i.test(entryText);
+            
+            if (isChapterStart && pageMatch) {
+              const pageNumber = parseInt(pageMatch[1] || pageMatch[2], 10);
+              console.log(`Found chapter start in TOC: "${entry}" on page ${pageNumber}`);
+              return pageNumber;
+            }
+          } else if (typeof entry === 'object' && entry.title && entry.pageNumber) {
+            // Parse object entries (newer API format)
+            const title = entry.title.toLowerCase();
+            const isChapterStart = /chapter\s*1|chapter\s*one|introduction|prologue|part\s*one|part\s*1|begin/i.test(title);
+            
+            // Check if page number is numeric (not roman numerals)
+            if (isChapterStart && /^\d+$/.test(entry.pageNumber)) {
+              const pageNumber = parseInt(entry.pageNumber, 10);
+              console.log(`Found chapter start in TOC: "${entry.title}" on page ${pageNumber}`);
+              return pageNumber;
+            }
+          }
+        }
+        
+        // If no chapter start found, look for the first entry with numeric pagination
+        for (const entry of volumeInfo.tableOfContents) {
+          if (typeof entry === 'string') {
+            const pageMatch = entry.match(/page\s*(\d+)|p\.\s*(\d+)/i);
+            if (pageMatch) {
+              const pageNumber = parseInt(pageMatch[1] || pageMatch[2], 10);
+              console.log(`Found first numeric page in TOC: "${entry}" on page ${pageNumber}`);
+              return pageNumber;
+            }
+          } else if (typeof entry === 'object' && entry.pageNumber && /^\d+$/.test(entry.pageNumber)) {
+            const pageNumber = parseInt(entry.pageNumber, 10);
+            console.log(`Found first numeric page in TOC: "${entry.title}" on page ${pageNumber}`);
+            return pageNumber;
+          }
+        }
+      } else {
+        console.log('No table of contents found in volume info');
+      }
+      
+      // Check for text snippets that might indicate chapter starts
+      if (volumeInfo?.description) {
+        const description = volumeInfo.description.toLowerCase();
+        const chapterMatch = description.match(/chapter\s*1|chapter\s*one|introduction|prologue/i);
+        
+        if (chapterMatch) {
+          console.log(`Found chapter reference in description: "${chapterMatch[0]}"`);
+          // Since we don't have a page number, return a default starting point
+          return 4; // Default starting point if we find chapter references but no page numbers
+        }
+      }
+      
+      // If we couldn't find a specific start page, return null
+      console.log('Could not determine exact start page from metadata');
+      return null;
+    } catch (error) {
+      console.error('Error finding book start page:', error);
+      return null;
+    }
+  }
+
+  /**
    * Extract preview text from book information
    * @param bookInfo Book information from Google Books API
    * @param isFiction Whether the book is fiction or non-fiction
@@ -374,31 +468,51 @@ export class PdfScraperService {
         console.log(`Reading modes: ${JSON.stringify(bookInfo.volumeInfo.readingModes)}`);
       }
       
-      // Determine which page to extract based on whether the book is fiction or non-fiction
-      // For fiction books, go to the second page after the full page of text (page 5)
-      // For non-fiction books, stay on the original full page of text (page 4)
-      const pageNumber = isFiction ? 5 : 4;
-      console.log(`Target page to extract: ${pageNumber} (${isFiction ? 'fiction - second page after full text' : 'non-fiction - first full page of text'})`);
+      // Try to find the true start page of the book using table of contents metadata
+      let startPage = null;
+      try {
+        startPage = await this.findBookStartPage(bookId);
+      } catch (error) {
+        console.error('Error finding start page:', error);
+      }
+      
+      // Determine which page to extract based on the book type and metadata
+      let pageNumber;
+      
+      if (startPage) {
+        // If we found a specific start page from metadata, use it
+        // For fiction books, go to the second page after the start
+        // For non-fiction books, stay on the start page
+        pageNumber = isFiction ? startPage + 1 : startPage;
+        console.log(`Using metadata-derived page number: ${pageNumber} (${isFiction ? 'fiction - page after start' : 'non-fiction - start page'})`);
+      } else {
+        // Fall back to our default page selection logic
+        // For fiction books, go to the second page after the full page of text (page 5)
+        // For non-fiction books, stay on the original full page of text (page 4)
+        pageNumber = isFiction ? 5 : 4;
+        console.log(`Using default page number: ${pageNumber} (${isFiction ? 'fiction - second page after full text' : 'non-fiction - first full page of text'})`);
+      }
       
       // Generate embedded viewer HTML if the book is embeddable
       if (bookInfo.accessInfo?.embeddable) {
         console.log('Book is embeddable, generating embedded viewer HTML');
         
         // Create a special response object with both text and HTML
-        const embedHtml = this.generateEmbeddedViewerHtml(bookId, pageNumber, title, authors, isFiction, isbns);
+        const embedHtml = this.generateEmbeddedViewerHtml(bookId, pageNumber, title, authors, isFiction, isbns, startPage);
         
         // Return a JSON string that includes both the placeholder text and the HTML
         return JSON.stringify({
           text: 'Preview available in embedded viewer',
           html: embedHtml,
-          isbns
+          isbns,
+          startPage
         });
       }
       
       // If the book is not embeddable, fall back to the description
       console.log('Book is not embeddable, using description as fallback');
       if (bookInfo.volumeInfo?.description) {
-        return this.formatPreviewText(title, authors, bookInfo.volumeInfo.description, isFiction, true, isbns);
+        return this.formatPreviewText(title, authors, bookInfo.volumeInfo.description, isFiction, true, isbns, startPage);
       }
       
       console.log('No description available');
@@ -417,6 +531,7 @@ export class PdfScraperService {
    * @param authors Book authors
    * @param isFiction Whether the book is fiction or non-fiction
    * @param isbns Object with ISBN-10 and ISBN-13 if available
+   * @param startPage The true start page of the book content if available
    * @returns HTML for embedding the viewer
    */
   private generateEmbeddedViewerHtml(
@@ -425,11 +540,13 @@ export class PdfScraperService {
     title: string, 
     authors: string[], 
     isFiction: boolean,
-    isbns: { isbn10?: string, isbn13?: string } = {}
+    isbns: { isbn10?: string, isbn13?: string } = {},
+    startPage?: number | null
   ): string {
     const authorText = authors.length > 0 ? `by ${authors.join(', ')}` : '';
     const fictionStatus = isFiction ? 'Fiction' : 'Non-fiction';
     const isbnText = isbns.isbn13 ? `ISBN: ${isbns.isbn13}` : (isbns.isbn10 ? `ISBN: ${isbns.isbn10}` : '');
+    const startPageInfo = startPage ? `Content starts on page ${startPage}` : '';
     
     return `
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
@@ -445,6 +562,7 @@ export class PdfScraperService {
     .book-title { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
     .book-info { font-size: 14px; color: #555; }
     .isbn-info { font-size: 12px; color: #777; margin-top: 3px; }
+    .start-page-info { font-size: 12px; color: #4a6; margin-top: 3px; font-style: italic; }
     .viewer-container { flex: 1; width: 100%; height: calc(100% - 60px); }
     #viewerCanvas { width: 100%; height: 100%; }
     .error-message { color: red; padding: 20px; text-align: center; }
@@ -457,6 +575,8 @@ export class PdfScraperService {
     var currentPage = 0;
     var bookId = "${bookId}";
     var isbn = "${isbns.isbn13 || isbns.isbn10 || ''}";
+    var targetPage = ${pageNumber};
+    var startPage = ${startPage || 'null'};
     
     google.books.load();
     
@@ -489,12 +609,16 @@ export class PdfScraperService {
       
       // Navigate to the appropriate page after a delay
       setTimeout(function() {
-        // For fiction books, go to page 5 (second page after full text)
-        // For non-fiction books, go to page 4 (first full page of text)
-        var targetPage = isFiction ? 5 : 4;
+        console.log('Navigating to page ' + targetPage + ' (' + (isFiction ? 'fiction' : 'non-fiction') + ')');
+        
+        // Go to target page by navigating forward from page 1
         var pagesToAdvance = targetPage - 1; // Subtract 1 because we start at page 1
         
-        console.log('Navigating to page ' + targetPage + ' (' + (isFiction ? 'fiction - second page after full text' : 'non-fiction - first full page of text') + ')');
+        if (pagesToAdvance <= 0) {
+          // If target page is 1 or less, stay on page 1
+          updatePageInfo();
+          return;
+        }
         
         // Go to target page by navigating forward from page 1
         for (var i = 0; i < pagesToAdvance; i++) {
@@ -522,8 +646,9 @@ export class PdfScraperService {
   <div class="container">
     <div class="header">
       <div class="book-title">${title}</div>
-      <div class="book-info">${authorText} • ${fictionStatus} • Page ${isFiction ? '5' : '4'}</div>
+      <div class="book-info">${authorText} • ${fictionStatus} • Page ${pageNumber}</div>
       ${isbnText ? `<div class="isbn-info">${isbnText}</div>` : ''}
+      ${startPageInfo ? `<div class="start-page-info">${startPageInfo}</div>` : ''}
     </div>
     <div class="viewer-container">
       <div id="viewerCanvas"></div>
@@ -542,6 +667,7 @@ export class PdfScraperService {
    * @param isFiction Whether the book is fiction or non-fiction
    * @param isFallback Whether this is a fallback text
    * @param isbns Object with ISBN-10 and ISBN-13 if available
+   * @param startPage The true start page of the book content if available
    * @returns Formatted preview text
    */
   private formatPreviewText(
@@ -550,18 +676,30 @@ export class PdfScraperService {
     text: string, 
     isFiction: boolean, 
     isFallback: boolean = false,
-    isbns: { isbn10?: string, isbn13?: string } = {}
+    isbns: { isbn10?: string, isbn13?: string } = {},
+    startPage?: number | null
   ): string {
     const authorText = authors.length > 0 ? `by ${authors.join(', ')}` : '';
     const fictionStatus = isFiction ? 'Fiction' : 'Non-fiction';
-    // For fiction books, use page 5; for non-fiction books, use page 4
-    const pageNumber = isFiction ? 5 : 4;
+    
+    // Determine page number based on start page metadata if available
+    let pageNumber;
+    if (startPage) {
+      pageNumber = isFiction ? startPage + 1 : startPage;
+    } else {
+      pageNumber = isFiction ? 5 : 4;
+    }
     
     let formattedText = `${title} ${authorText}\nType: ${fictionStatus}\n`;
     
     // Add ISBN information if available
     if (isbns.isbn13 || isbns.isbn10) {
       formattedText += `ISBN: ${isbns.isbn13 || ''} ${isbns.isbn10 ? `(ISBN-10: ${isbns.isbn10})` : ''}\n`;
+    }
+    
+    // Add start page information if available
+    if (startPage) {
+      formattedText += `Content starts on page ${startPage}\n`;
     }
     
     if (isFallback) {
