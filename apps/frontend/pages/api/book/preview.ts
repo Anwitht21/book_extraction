@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { BookInformationService } from '../../../../../apps/backend/src/services/bookInformationService';
+import { BookInformationService } from '../../../lib/services/bookInformationService';
 
 // Initialize Book Information Service
 const bookInfoService = new BookInformationService();

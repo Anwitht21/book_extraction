@@ -1,8 +1,9 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { IncomingForm, Fields, Files } from 'formidable';
+import { IncomingForm } from 'formidable';
 import { uploadToStorage } from '../../lib/storage';
 import fs from 'fs';
-import { processBookCover } from '../../../../apps/backend/src/services/imageProcessor';
+import { processBookCover } from '../../lib/services/imageProcessor';
+import { v4 as uuidv4 } from 'uuid';
 
 // Disable the default body parser to handle file uploads
 export const config = {
@@ -24,15 +25,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
     // Process the form data
-    const [fields, files] = await new Promise<[Fields, Files]>((resolve, reject) => {
-      form.parse(req, (err: Error | null, fields: Fields, files: Files) => {
+    const formData = await new Promise<{ fields: any; files: any }>((resolve, reject) => {
+      form.parse(req, (err, fields, files) => {
         if (err) return reject(err);
-        resolve([fields, files]);
+        resolve({ fields, files });
       });
     });
 
     // Get the uploaded file
-    const file = files.coverImage?.[0];
+    const file = formData.files.coverImage;
     if (!file || !file.filepath) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -41,7 +42,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const fileData = fs.readFileSync(file.filepath);
     
     // Upload to Vercel Blob Storage
-    const imageUrl = await uploadToStorage(fileData, `book-cover-${Date.now()}.jpg`);
+    const imageUrl = await uploadToStorage(fileData, `book-cover-${uuidv4()}.jpg`);
     
     // Process the book cover
     const bookData = await processBookCover(imageUrl);
