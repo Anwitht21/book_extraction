@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { BookData } from '../types';
+import { BookData } from 'shared';
 import { createWorker } from 'tesseract.js';
 
 /**
