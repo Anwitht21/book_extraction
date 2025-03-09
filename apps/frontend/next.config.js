@@ -12,16 +12,6 @@ const nextConfig = {
       },
     ];
   },
-  // Allow importing TypeScript files
-  webpack: (config, { isServer }) => {
-    // Add TypeScript loader for .ts files
-    config.module.rules.push({
-      test: /\.ts$/,
-      use: 'ts-loader',
-    });
-
-    return config;
-  },
 };
 
 module.exports = nextConfig; 

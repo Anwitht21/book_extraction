@@ -22,48 +22,22 @@ const bookInfoService = new BookInformationService();
 
 /**
  * Process a book cover image to extract book data
- * @param imagePathOrUrl Path to the uploaded image or URL
+ * @param imagePath Path to the uploaded image
  * @returns Promise with book data
  */
-export async function processBookCover(imagePathOrUrl: string): Promise<BookData> {
-  let localImagePath: string | null = null;
-  let needsCleanup = false;
-
+export async function processBookCover(imagePath: string): Promise<BookData> {
   try {
-    console.log(`Processing image: ${imagePathOrUrl}`);
+    console.log(`Processing image: ${imagePath}`);
     
-    // Check if the input is a URL
-    if (imagePathOrUrl.startsWith('http')) {
-      // Download the image to a temporary file
-      console.log('Input is a URL, downloading image...');
-      const response = await fetch(imagePathOrUrl);
-      const imageBuffer = await response.arrayBuffer();
-      
-      // Create temp directory if it doesn't exist
-      const tempDir = path.join(process.cwd(), 'temp');
-      if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
-      }
-      
-      // Save the image to a temporary file
-      localImagePath = path.join(tempDir, `temp-${Date.now()}.jpg`);
-      fs.writeFileSync(localImagePath, Buffer.from(imageBuffer));
-      needsCleanup = true;
-      console.log(`Image downloaded to: ${localImagePath}`);
-    } else {
-      // Input is a local file path
-      localImagePath = imagePathOrUrl;
-      
-      // Verify the file exists
-      if (!fs.existsSync(localImagePath)) {
-        console.error(`File does not exist: ${localImagePath}`);
-        throw new Error(`File does not exist: ${localImagePath}`);
-      }
+    // Verify the file exists
+    if (!fs.existsSync(imagePath)) {
+      console.error(`File does not exist: ${imagePath}`);
+      throw new Error(`File does not exist: ${imagePath}`);
     }
     
     // Step 1: Validate the image is a book cover using OpenAI GPT-4o mini
     console.log('Step 1: Validating image is a book cover using OpenAI GPT-4o mini');
-    const isValidBookCover = await isBookCover(localImagePath);
+    const isValidBookCover = await isBookCover(imagePath);
     if (!isValidBookCover) {
       console.log('Image validation failed: Not a book cover');
       throw new Error('The uploaded image does not appear to be a book cover. Please retake the photo.');
@@ -72,7 +46,7 @@ export async function processBookCover(imagePathOrUrl: string): Promise<BookData
 
     // Step 2: Extract book title and author using OpenAI GPT-4o mini
     console.log('Step 2: Extracting book title and author using OpenAI GPT-4o mini');
-    const { title: extractedTitle, author: extractedAuthor } = await extractBookTitleAndAuthor(localImagePath);
+    const { title: extractedTitle, author: extractedAuthor } = await extractBookTitleAndAuthor(imagePath);
     console.log('Extracted title:', extractedTitle);
     console.log('Extracted author:', extractedAuthor);
 
@@ -82,87 +56,108 @@ export async function processBookCover(imagePathOrUrl: string): Promise<BookData
     
     // Step 4: Recognize text from the image
     console.log('Step 4: Recognizing text from image');
-    const { data: { text } } = await worker.recognize(localImagePath);
-    console.log('OCR text extracted:', text.substring(0, 100) + '...');
-    
-    // Step 5: Terminate the worker
+    const result = await worker.recognize(imagePath);
     await worker.terminate();
+    console.log('Recognized text:', result.data.text.substring(0, 100) + '...');
     
-    // Step 6: Classify the book as fiction or non-fiction
-    console.log('Step 6: Classifying book as fiction or non-fiction');
-    const classification = await classifyBook(localImagePath, extractedTitle, extractedAuthor);
+    // Step 5: Extract ISBN and other data from the recognized text
+    console.log('Step 5: Extracting ISBN and other data from text');
+    const extractedData = extractBookData(result.data.text, extractedTitle, extractedAuthor);
+    console.log('Extracted data:', extractedData);
+    
+    // Step 6: Identify the book using Open Library API
+    console.log('Step 6: Identifying book using Open Library API');
+    const bookInfo = await identifyBookByTitle(extractedData.title, extractedData.author);
+    console.log('Book info from API:', bookInfo);
+    
+    // Step 7: Get more accurate book details from Google Books API
+    console.log('Step 7: Getting book details from Google Books API');
+    const bookTitle = bookInfo?.title || extractedData.title;
+    const bookAuthor = bookInfo?.author || extractedData.author;
+    const googleBooksDetails = await googleBooksService.getBookDetails(bookTitle, bookAuthor);
+    console.log('Google Books details:', googleBooksDetails);
+    
+    // Step 8: Classify the book as fiction or non-fiction using OpenAI GPT-4o mini
+    console.log('Step 8: Classifying book as fiction or non-fiction using OpenAI GPT-4o mini');
+    const finalTitle = googleBooksDetails.title || bookTitle;
+    const finalAuthor = googleBooksDetails.author || bookAuthor;
+    const classification = await classifyBook(imagePath, finalTitle, finalAuthor);
     console.log('Book classification:', classification);
     
-    // Step 7: Finalize the title and author
-    const finalTitle = extractedTitle;
-    const finalAuthor = extractedAuthor;
-    
-    // Step 8: Try to find book preview text
-    console.log('Step 8: Finding book preview text');
+    // Step 9: Try to get full book text from PDF scraper
+    console.log('Step 9: Searching for full book text from PDF');
+    let extractedText = '';
+    let embeddedViewerHtml = '';
     let pdfText = null;
-    
+
     try {
-      // Make multiple attempts to find book information with different search variations
+      // Make multiple attempts to find the PDF with different search variations
       console.log('Attempting to find book information with multiple search variations...');
       pdfText = await bookInfoService.findBookInformation(finalTitle, finalAuthor);
       
       // Check if the result is a special JSON response with both text and HTML
-      if (pdfText && pdfText.startsWith('{') && pdfText.endsWith('}')) {
+      if (pdfText && pdfText.trim().startsWith('{') && pdfText.includes('"text"') && pdfText.includes('"html"')) {
         try {
-          const jsonData = JSON.parse(pdfText);
-          if (jsonData.text && jsonData.html) {
-            pdfText = jsonData.text;
-            // Store the HTML for embedded viewer
-            const embeddedViewerHtml = jsonData.html;
-            
-            // Return the book data with embedded viewer HTML
-            return {
-              title: finalTitle,
-              author: finalAuthor,
-              extractedText: pdfText,
-              coverImageUrl: imagePathOrUrl, // Use the original URL
-              classification,
-              embeddedViewerHtml,
-              isbn: '' // Add empty ISBN as it's required by the BookData type
-            };
-          }
-        } catch (e) {
-          // Not valid JSON, continue with normal text
-          console.log('Preview text is not valid JSON, using as plain text');
+          const parsedResult = JSON.parse(pdfText);
+          console.log('Found embedded viewer HTML and text');
+          extractedText = parsedResult.text;
+          embeddedViewerHtml = parsedResult.html;
+        } catch (parseError) {
+          console.error('Error parsing JSON response:', parseError);
+          extractedText = pdfText;
         }
+      } else if (pdfText && pdfText.trim().startsWith('<!DOCTYPE html')) {
+        console.log('Found embedded viewer HTML');
+        embeddedViewerHtml = pdfText;
+        // Set a placeholder for extracted text
+        extractedText = `Preview available in embedded viewer`;
+      } else if (pdfText) {
+        console.log('Found book text from PDF or alternative source');
+        extractedText = pdfText;
       }
     } catch (error) {
-      console.error('Error finding book preview:', error);
+      console.error('Error finding PDF:', error);
+      pdfText = null;
     }
-    
-    // Step 9: If no preview text was found, use OpenAI to generate some text
+
     if (!pdfText) {
-      console.log('No preview text found, generating with OpenAI...');
-      pdfText = await extractBookText(finalTitle, finalAuthor, classification.isFiction);
+      // Step 10: If no PDF found, use OpenAI to generate sample text
+      console.log('Step 10: No PDF found, using OpenAI to generate sample text');
+      extractedText = await extractBookText(finalTitle, finalAuthor, classification.isFiction);
+      console.log('Generated text from OpenAI:', extractedText.substring(0, 100) + '...');
     }
     
-    // Step 10: Return the book data
-    return {
+    // Step 11: Fetch book excerpt if available (as a fallback for description)
+    console.log('Step 11: Fetching book excerpt for description');
+    let description = googleBooksDetails.description || '';
+    if (!description && bookInfo && bookInfo.openLibraryID) {
+      description = await fetchBookExcerpt(bookInfo.openLibraryID);
+      console.log('Fetched description from Open Library:', description.substring(0, 100) + '...');
+    } else {
+      console.log('Using Google Books description or no Open Library ID available');
+    }
+    
+    // Step 12: Combine all data
+    console.log('Step 12: Combining all data');
+    const bookData: BookData = {
       title: finalTitle,
       author: finalAuthor,
-      extractedText: pdfText,
-      coverImageUrl: imagePathOrUrl, // Use the original URL
-      classification,
-      isbn: '' // Add empty ISBN as it's required by the BookData type
+      isbn: googleBooksDetails.isbn || bookInfo?.isbn || extractedData.isbn,
+      publisher: googleBooksDetails.publisher || bookInfo?.publisher,
+      publicationYear: googleBooksDetails.publicationYear || bookInfo?.publicationYear,
+      description: description || 'No description available',
+      coverImageUrl: googleBooksDetails.coverImageUrl || bookInfo?.coverImageUrl,
+      extractedText: extractedText,
+      embeddedViewerHtml: embeddedViewerHtml || undefined,
+      classification: classification
     };
+    
+    console.log('Final book data:', bookData);
+    
+    return bookData;
   } catch (error) {
     console.error('Error processing book cover:', error);
-    throw error;
-  } finally {
-    // Clean up temporary file if needed
-    if (needsCleanup && localImagePath && fs.existsSync(localImagePath)) {
-      try {
-        fs.unlinkSync(localImagePath);
-        console.log(`Cleaned up temporary file: ${localImagePath}`);
-      } catch (error) {
-        console.error('Error cleaning up temporary file:', error);
-      }
-    }
+    throw new Error(error instanceof Error ? error.message : 'Failed to process book cover image');
   }
 }
 
