@@ -3,6 +3,7 @@ import fs from 'fs';
 import { BookClassification } from 'shared';
 import path from 'path';
 import dotenv from 'dotenv';
+import { PdfScraperService } from './pdfScraperService';
 
 // Load environment variables from .env file
 const envPath = path.resolve(process.cwd(), '.env');
@@ -278,4 +279,243 @@ export async function extractBookTitleAndAuthor(imagePath: string): Promise<{ ti
       author: 'Unknown Author' 
     };
   }
+}
+
+/**
+ * Validates if an image is a book cover with retry functionality
+ * @param imagePath Path to the image file
+ * @param maxRetries Maximum number of retries allowed (default: 3)
+ * @returns Promise with validation result, retry information, and message
+ */
+export async function validateBookCoverWithRetry(
+  imagePath: string, 
+  maxRetries: number = 3
+): Promise<{
+  isValid: boolean;
+  needsRetry: boolean;
+  retriesLeft: number;
+  message: string;
+}> {
+  try {
+    console.log(`Validating book cover image with ${maxRetries} retries remaining`);
+    
+    // Check if the file exists
+    if (!fs.existsSync(imagePath)) {
+      return {
+        isValid: false,
+        needsRetry: maxRetries > 0,
+        retriesLeft: maxRetries,
+        message: `Image file not found. ${maxRetries > 0 ? `Please upload a valid image (${maxRetries} attempts remaining).` : 'No more attempts remaining.'}`
+      };
+    }
+    
+    // Validate if the image is a book cover using OpenAI
+    const isValid = await isBookCover(imagePath);
+    
+    if (isValid) {
+      return {
+        isValid: true,
+        needsRetry: false,
+        retriesLeft: maxRetries,
+        message: 'Valid book cover image detected.'
+      };
+    } else {
+      // Not a valid book cover
+      return {
+        isValid: false,
+        needsRetry: maxRetries > 0,
+        retriesLeft: maxRetries,
+        message: `The image does not appear to be a book cover. ${maxRetries > 0 ? `Please upload a different image (${maxRetries} attempts remaining).` : 'No more attempts remaining.'}`
+      };
+    }
+  } catch (error) {
+    console.error('Error in validateBookCoverWithRetry:', error);
+    
+    // In case of error, give the user another chance if retries are available
+    return {
+      isValid: false,
+      needsRetry: maxRetries > 0,
+      retriesLeft: maxRetries,
+      message: `Error processing the image. ${maxRetries > 0 ? `Please try again (${maxRetries} attempts remaining).` : 'No more attempts remaining.'}`
+    };
+  }
+}
+
+/**
+ * Processes a book cover image to extract information and validate it
+ * @param imagePath Path to the book cover image
+ * @param maxRetries Maximum number of retries allowed (default: 3)
+ * @returns Promise with processing result, book information, and retry details
+ */
+export async function processBookCoverImage(
+  imagePath: string,
+  maxRetries: number = 3
+): Promise<{
+  success: boolean;
+  isValid: boolean;
+  needsRetry: boolean;
+  retriesLeft: number;
+  message: string;
+  bookInfo?: {
+    title: string;
+    author: string;
+    isFiction?: boolean;
+  };
+}> {
+  try {
+    // First, validate if the image is a book cover
+    const validationResult = await validateBookCoverWithRetry(imagePath, maxRetries);
+    
+    if (!validationResult.isValid) {
+      // If not a valid book cover, return the validation result
+      return {
+        success: false,
+        ...validationResult
+      };
+    }
+    
+    // If it's a valid book cover, extract title and author
+    const { title, author } = await extractBookTitleAndAuthor(imagePath);
+    
+    // Classify the book as fiction or non-fiction
+    const classification = await classifyBook(imagePath, title, author);
+    
+    return {
+      success: true,
+      isValid: true,
+      needsRetry: false,
+      retriesLeft: maxRetries,
+      message: 'Book cover processed successfully.',
+      bookInfo: {
+        title,
+        author,
+        isFiction: classification.isFiction
+      }
+    };
+  } catch (error) {
+    console.error('Error processing book cover image:', error);
+    
+    return {
+      success: false,
+      isValid: false,
+      needsRetry: maxRetries > 0,
+      retriesLeft: maxRetries,
+      message: `Error processing the book cover. ${maxRetries > 0 ? `Please try again (${maxRetries} attempts remaining).` : 'No more attempts remaining.'}`
+    };
+  }
+}
+
+/**
+ * Complete flow to process a book cover image, validate it, and extract preview text
+ * @param imagePath Path to the book cover image
+ * @param pdfScraperService Instance of PdfScraperService
+ * @param maxRetries Maximum number of retries allowed (default: 3)
+ * @returns Promise with complete processing result
+ */
+export async function processBookCoverAndExtractPreview(
+  imagePath: string,
+  pdfScraperService: PdfScraperService,
+  maxRetries: number = 3
+): Promise<{
+  success: boolean;
+  isValid: boolean;
+  needsRetry: boolean;
+  retriesLeft: number;
+  message: string;
+  bookInfo?: {
+    title: string;
+    author: string;
+    isFiction?: boolean;
+    isbn?: string;
+  };
+  previewText?: string | null;
+}> {
+  try {
+    // Process the book cover image
+    const processResult = await processBookCoverImage(imagePath, maxRetries);
+    
+    // If the image is not valid or processing failed
+    if (!processResult.success || !processResult.isValid) {
+      return processResult;
+    }
+    
+    // If we have valid book info, try to extract preview text
+    const bookInfo = processResult.bookInfo!;
+    console.log(`Extracting preview for book: "${bookInfo.title}" by ${bookInfo.author}`);
+    
+    // Use the PdfScraperService to find the book preview
+    const previewText = await pdfScraperService.findBookPdf(
+      bookInfo.title,
+      bookInfo.author
+    );
+    
+    if (previewText) {
+      return {
+        ...processResult,
+        message: 'Book cover processed and preview text extracted successfully.',
+        previewText
+      };
+    } else {
+      return {
+        ...processResult,
+        message: 'Book cover is valid, but could not extract preview text. The book may not be available in Google Books.',
+        previewText: null
+      };
+    }
+  } catch (error) {
+    console.error('Error in processBookCoverAndExtractPreview:', error);
+    
+    return {
+      success: false,
+      isValid: false,
+      needsRetry: maxRetries > 0,
+      retriesLeft: maxRetries,
+      message: `Error processing the book cover and extracting preview. ${maxRetries > 0 ? `Please try again (${maxRetries} attempts remaining).` : 'No more attempts remaining.'}`
+    };
+  }
+}
+
+/**
+ * Handles the retry flow for book cover image validation and processing
+ * @param imagePath Path to the current image
+ * @param pdfScraperService Instance of PdfScraperService
+ * @param currentRetry Current retry attempt (default: 0)
+ * @param maxRetries Maximum number of retries allowed (default: 3)
+ * @returns Promise with processing result and retry information
+ */
+export async function handleBookCoverRetryFlow(
+  imagePath: string,
+  pdfScraperService: PdfScraperService,
+  currentRetry: number = 0,
+  maxRetries: number = 3
+): Promise<{
+  success: boolean;
+  isValid: boolean;
+  needsRetry: boolean;
+  retriesLeft: number;
+  message: string;
+  currentAttempt: number;
+  bookInfo?: {
+    title: string;
+    author: string;
+    isFiction?: boolean;
+  };
+  previewText?: string | null;
+}> {
+  // Calculate retries left
+  const retriesLeft = Math.max(0, maxRetries - currentRetry);
+  
+  console.log(`Processing book cover image (Attempt ${currentRetry + 1}/${maxRetries + 1})`);
+  
+  // Process the image
+  const result = await processBookCoverAndExtractPreview(
+    imagePath,
+    pdfScraperService,
+    retriesLeft
+  );
+  
+  return {
+    ...result,
+    currentAttempt: currentRetry + 1
+  };
 } 

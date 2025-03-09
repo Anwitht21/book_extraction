@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { uploadRoutes } from './routes/upload';
-import { bookRoutes } from './routes/book';
+import { bookRoutes } from './routes/bookRoutes';
 import path from 'path';
 import fs from 'fs';
 
@@ -28,6 +28,13 @@ const tempDir = path.join(process.cwd(), 'temp');
 if (!fs.existsSync(tempDir)) {
   console.log('Creating temp directory for PDF downloads:', tempDir);
   fs.mkdirSync(tempDir, { recursive: true });
+}
+
+// Ensure uploads directory exists for image uploads
+const uploadsDir = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  console.log('Creating uploads directory for image files:', uploadsDir);
+  fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
 const app = express();
