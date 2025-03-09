@@ -74,13 +74,13 @@ export class BookInformationService {
   }
 
   /**
-   * Get preview text from a book by title and author
-   * @param title Book title
+   * Find book information and preview text by title and author
+   * @param title Book title to search for
    * @param author Book author (optional)
    * @param isbn ISBN (optional) - if provided, will be used to prioritize matching editions
    * @returns Promise with book preview text or null if not found
    */
-  async findBookPdf(title: string, author?: string, isbn?: string): Promise<string | null> {
+  async findBookInformation(title: string, author?: string, isbn?: string): Promise<string | null> {
     try {
       console.log(`Searching for preview of "${title}" ${author ? `by ${author}` : ''} ${isbn ? `ISBN: ${isbn}` : ''}`);
       

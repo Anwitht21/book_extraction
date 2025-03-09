@@ -3,7 +3,7 @@ import fs from 'fs';
 import { BookClassification } from 'shared';
 import path from 'path';
 import dotenv from 'dotenv';
-import { PdfScraperService } from './pdfScraperService';
+import { BookInformationService } from './bookInformationService';
 
 // Load environment variables from .env file
 const envPath = path.resolve(process.cwd(), '.env');
@@ -406,15 +406,15 @@ export async function processBookCoverImage(
 }
 
 /**
- * Complete flow to process a book cover image, validate it, and extract preview text
- * @param imagePath Path to the book cover image
- * @param pdfScraperService Instance of PdfScraperService
- * @param maxRetries Maximum number of retries allowed (default: 3)
- * @returns Promise with complete processing result
+ * Process a book cover image and extract preview text
+ * @param imagePath Path to the uploaded image
+ * @param pdfScraperService Instance of BookInformationService
+ * @param maxRetries Maximum number of retries for image processing
+ * @returns Promise with processing results
  */
 export async function processBookCoverAndExtractPreview(
   imagePath: string,
-  pdfScraperService: PdfScraperService,
+  pdfScraperService: BookInformationService,
   maxRetries: number = 3
 ): Promise<{
   success: boolean;
@@ -426,7 +426,6 @@ export async function processBookCoverAndExtractPreview(
     title: string;
     author: string;
     isFiction?: boolean;
-    isbn?: string;
   };
   previewText?: string | null;
 }> {
@@ -443,8 +442,8 @@ export async function processBookCoverAndExtractPreview(
     const bookInfo = processResult.bookInfo!;
     console.log(`Extracting preview for book: "${bookInfo.title}" by ${bookInfo.author}`);
     
-    // Use the PdfScraperService to find the book preview
-    const previewText = await pdfScraperService.findBookPdf(
+    // Use the BookInformationService to find the book preview
+    const previewText = await pdfScraperService.findBookInformation(
       bookInfo.title,
       bookInfo.author
     );
@@ -476,16 +475,16 @@ export async function processBookCoverAndExtractPreview(
 }
 
 /**
- * Handles the retry flow for book cover image validation and processing
- * @param imagePath Path to the current image
- * @param pdfScraperService Instance of PdfScraperService
- * @param currentRetry Current retry attempt (default: 0)
- * @param maxRetries Maximum number of retries allowed (default: 3)
- * @returns Promise with processing result and retry information
+ * Handle retry flow for book cover processing
+ * @param imagePath Path to the uploaded image
+ * @param pdfScraperService Instance of BookInformationService
+ * @param currentRetry Current retry attempt
+ * @param maxRetries Maximum number of retries
+ * @returns Promise with processing results
  */
 export async function handleBookCoverRetryFlow(
   imagePath: string,
-  pdfScraperService: PdfScraperService,
+  pdfScraperService: BookInformationService,
   currentRetry: number = 0,
   maxRetries: number = 3
 ): Promise<{

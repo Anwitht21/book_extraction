@@ -44,13 +44,16 @@ The service uses a combination of methods to determine if a book is fiction or n
 4. Analyzes the book title for fiction-related terms
 5. Defaults to non-fiction if the book type cannot be determined
 
+#### Testing
+
+1. In the "book covers" folder, there is a series of example book covers you can use to test the pipeline.
+
 ### Environment Variables
 
 The following environment variables need to be set:
 
 - `GOOGLE_BOOKS_API_KEY`: Your Google Books API key (required for book preview text extraction)
-- `SERPAPI_KEY`: Your SerpAPI key (if using SerpAPI)
-- `USE_SELENIUM`: Whether to use Selenium for web scraping (true/false)
+- `OPENAI_API_KEY`: Your OpenAI API key (required for book cover, title, author identification)
 
 You can copy `.env.example` to `.env` and fill in your API keys.
 

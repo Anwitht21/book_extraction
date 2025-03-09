@@ -5,7 +5,7 @@ import path from 'path';
 import fetch from 'node-fetch';
 import { isBookCover, classifyBook, extractBookText, extractBookTitleAndAuthor } from './openaiService';
 import { GoogleBooksService } from './googleBooksService';
-import { PdfScraperService } from './pdfScraperService';
+import { BookInformationService } from './bookInformationService';
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(process.cwd(), 'uploads');
@@ -17,8 +17,8 @@ if (!fs.existsSync(uploadsDir)) {
 // Initialize Google Books Service
 const googleBooksService = new GoogleBooksService();
 
-// Initialize PDF Scraper Service
-const pdfScraperService = new PdfScraperService();
+// Initialize Book Information Service
+const bookInfoService = new BookInformationService();
 
 /**
  * Process a book cover image to extract book data
@@ -92,8 +92,8 @@ export async function processBookCover(imagePath: string): Promise<BookData> {
 
     try {
       // Make multiple attempts to find the PDF with different search variations
-      console.log('Attempting to find PDF with multiple search variations...');
-      pdfText = await pdfScraperService.findBookPdf(finalTitle, finalAuthor);
+      console.log('Attempting to find book information with multiple search variations...');
+      pdfText = await bookInfoService.findBookInformation(finalTitle, finalAuthor);
       
       // Check if the result is a special JSON response with both text and HTML
       if (pdfText && pdfText.trim().startsWith('{') && pdfText.includes('"text"') && pdfText.includes('"html"')) {

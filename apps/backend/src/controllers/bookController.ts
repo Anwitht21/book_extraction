@@ -1,13 +1,13 @@
 import { Request, Response } from 'express';
-import { PdfScraperService } from '../services/pdfScraperService';
+import { BookInformationService } from '../services/bookInformationService';
 import * as OpenAIService from '../services/openaiService';
 import * as fs from 'fs';
 import * as path from 'path';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 
-// Initialize PDF scraper service
-const pdfScraperService = new PdfScraperService();
+// Initialize Book Information service
+const bookInfoService = new BookInformationService();
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -59,7 +59,7 @@ export async function getBookPreview(req: Request, res: Response) {
       });
     }
     
-    const previewText = await pdfScraperService.findBookPdf(
+    const previewText = await bookInfoService.findBookInformation(
       title as string,
       author as string | undefined
     );
@@ -108,7 +108,7 @@ export async function processBookCover(req: Request, res: Response) {
     // Process the book cover image with retry handling
     const result = await OpenAIService.handleBookCoverRetryFlow(
       imagePath,
-      pdfScraperService,
+      bookInfoService,
       currentRetry,
       maxRetries
     );
@@ -187,7 +187,7 @@ export async function getBookByIsbn(req: Request, res: Response) {
       });
     }
     
-    const previewText = await pdfScraperService.findBookByIsbn(isbn as string);
+    const previewText = await bookInfoService.findBookByIsbn(isbn as string);
     
     if (!previewText) {
       return res.status(404).json({ 
